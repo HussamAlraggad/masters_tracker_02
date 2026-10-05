@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # PocketBase - Local Development
+  pocketbase:
+    image: ghcr.io/pocketbase/pocketbase:latest
+    container_name: masters-tracker-pocketbase
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pb_data:/pb_data
+      - ./pb_migrations:/pb_migrations
+      - ./pb_public:/pb_public
+    command: ["serve", "--http=0.0.0.0:8090", "--dir=/pb_data", "--migrationsDir=/pb_migrations", "--publicDir=/pb_public"]
+    environment:
+      - PB_ENCRYPTION_KEY=${PB_ENCRYPTION_KEY:-your-super-secret-encryption-key-change-in-production}
+      - PB_ADMIN_EMAIL=${PB_ADMIN_EMAIL:-admin@masterstracker.local}
+      - PB_ADMIN_PASSWORD=${PB_ADMIN_PASSWORD:-admin123456}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Cloudflare Tunnel - Exposes local PocketBase to internet
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: masters-tracker-tunnel
+    depends_on:
+      - pocketbase
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    # Alternative: Quick tunnel without token (random subdomain)
+    # command: tunnel --no-autoupdate --url http://pocketbase:8090
+    # This gives you a random *.trycloudflare.com URL
+
+  # Next.js Development Server
+  nextjs:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: masters-tracker-nextjs
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_POCKETBASE_URL=http://pocketbase:8090
+      - NODE_ENV=development
+    depends_on:
+      - pocketbase
+    command: pnpm run dev
+    restart: unless-stopped
+
+volumes:
+  pb_data:
+  pb_migrations:
+  pb_public:
+
+networks:
+  default:
+    name: masters-tracker-network
